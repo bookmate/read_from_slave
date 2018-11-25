@@ -54,12 +54,13 @@
 # ** looks like it won't work with apps that talk to multiple (master) databases
 # ** more complex than read_from_slave
 #
+
 module ReadFromSlave
   class << self
     def install!
       base = ActiveRecord::Base
-      base.send(:include, InstanceMethods)
-      base.alias_method_chain :reload, :read_from_slave
+      base.prepend InstanceMethods
+
       base.extend(ClassMethods)
       base.class_eval do
         class << self
@@ -69,16 +70,9 @@ module ReadFromSlave
       end
 
       begin
-        calculation_base = ActiveRecord::Relation  # rails 3
-        calculation_base.send(:include, CalculationMethod)
-        calculation_base.alias_method_chain :calculate, :read_from_slave
-      rescue NameError  # rails 2
-        base.extend(CalculationMethod)
-        base.class_eval do
-          class << self
-            alias_method_chain :calculate, :read_from_slave
-          end
-        end
+        ActiveRecord::Relation.prepend(CalculationMethod)
+      rescue NameError # Rails 2
+        base.singleton_class.prepend(CalculationMethod)
       end
     end
 
@@ -126,9 +120,9 @@ module ReadFromSlave
   end
 
   module InstanceMethods
-    def reload_with_read_from_slave(options = nil)
+    def reload(options = nil)
       Thread.current[:read_from_slave] = :reload
-      reload_without_read_from_slave(options)
+      super
     end
   end
 
@@ -249,9 +243,9 @@ module ReadFromSlave
   end
 
   module CalculationMethod
-    def calculate_with_read_from_slave(*args)
+    def calculate(*args)
       Thread.current[:read_from_slave] = true
-      calculate_without_read_from_slave(*args)
+      super
     ensure
       Thread.current[:read_from_slave] = false
     end
