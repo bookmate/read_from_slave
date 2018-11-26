@@ -58,11 +58,10 @@
 module ReadFromSlave
   class << self
     def install!
-      base = ActiveRecord::Base
-      base.prepend InstanceMethods
+      ActiveRecord::Base.prepend(ReadFromSlave::InstanceMethods)
+      ActiveRecord::Base.extend(ReadFromSlave::ClassMethods)
 
-      base.extend(ClassMethods)
-      base.class_eval do
+      ActiveRecord::Base.class_eval do
         class << self
           alias_method_chain :find_by_sql, :read_from_slave
           alias_method_chain :connection, :read_from_slave
@@ -72,13 +71,16 @@ module ReadFromSlave
       begin
         ActiveRecord::Relation.prepend(CalculationMethod)
       rescue NameError # Rails 2
-        base.singleton_class.prepend(CalculationMethod)
+        ActiveRecord::Base.singleton_class.prepend(CalculationMethod)
       end
     end
 
     def install_with_methods!
-      ActiveRecord::Base.connection.instance_variable_get(:@config)[:slaves].each_key do |slave_name|
-        ActiveRecord::Base.class_eval <<-EOM
+      slaves = ActiveRecord::Base.connection.instance_variable_get(:@config)[:slaves]
+      return unless slaves
+
+      slaves.each_key do |slave_name|
+        ActiveRecord::Base.class_eval(<<-RUBY, __FILE__, __LINE__ + 1)
           def self.with_#{slave_name}(&block)
             Thread.current[:with_#{slave_name}_count] ||= 0
             Thread.current[:with_#{slave_name}_count] += 1
@@ -86,13 +88,12 @@ module ReadFromSlave
           ensure
             Thread.current[:with_#{slave_name}_count] -= 1
           end
-        EOM
-      end if ActiveRecord::Base.connection.instance_variable_get(:@config)[:slaves]
+        RUBY
+      end
     end
 
     def default_to_master!
-      base = ActiveRecord::Base
-      base.class_eval do
+      ActiveRecord::Base.class_eval do
         class << self
           alias_method_chain :connection, :slave_db_scope unless ReadFromSlave.all_reads_on_slave
         end
